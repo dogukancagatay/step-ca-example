@@ -1,0 +1,88 @@
+version: "3.9"
+services:
+  step-ca:
+    image: smallstep/step-ca
+    networks:
+      traefik-net:
+        aliases:
+          - "ca.myhost.local"
+    ports:
+      - 9000:9000
+    volumes:
+      - ./data/step-ca:/home/step
+
+  traefik:
+    image: traefik:v2.4
+    depends_on:
+      - step-ca
+    networks:
+      traefik-net:
+        aliases:
+          - "traefik"
+          - "traefik.myhost.local"
+          - "whoami.myhost.local"
+    command:
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=traefik-net"
+      - "--providers.file.filename=/dynamic-conf.yml"
+      - "--providers.file.watch=true"
+      - "--accesslog=false"
+      - "--log=true"
+      - "--log.level=DEBUG"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesResolvers.myresolver.acme.tlsChallenge=true"
+      - "--certificatesResolvers.myresolver.acme.email=admin"
+      - "--certificatesResolvers.myresolver.acme.storage=/etc/acme/acme.json"
+      - "--certificatesresolvers.myresolver.acme.caserver=https://ca.myhost.local:9000/acme/acme/directory"
+      - "--certificatesResolvers.myresolver.acme.httpChallenge=true"
+      - "--certificatesResolvers.myresolver.acme.httpChallenge.entryPoint=web"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/traefik/acme:/etc/acme
+      - ./data/step-ca/certs/root_ca.crt:/usr/local/share/ca-certificates/my_root_ca.crt
+      - ./config/traefik.yml:/dynamic-conf.yml
+    environment:
+      LEGO_CA_CERTIFICATES: "/usr/local/share/ca-certificates/my_root_ca.crt"
+      LEGO_CA_SERVER_NAME: "ca.myhost.local"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik0.entrypoints=web"
+      - "traefik.http.routers.traefik0.rule=Host(`traefik.myhost.local`)"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+
+      - "traefik.http.middlewares.traefik-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.traefik0.middlewares=traefik-redirect"
+
+      - "traefik.http.routers.traefik1.entrypoints=websecure"
+      - "traefik.http.routers.traefik1.rule=Host(`traefik.myhost.local`)"
+      - "traefik.http.routers.traefik1.tls=true"
+      - "traefik.http.routers.traefik1.tls.certresolver=myresolver"
+
+  whoami:
+    image: containous/whoami:latest
+    hostname: "whoami1"
+    networks:
+      traefik-net:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami0.entrypoints=web"
+      - "traefik.http.routers.whoami0.rule=Host(`whoami.myhost.local`)"
+
+      - "traefik.http.middlewares.whoami-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.whoami0.middlewares=whoami-redirect"
+
+      - "traefik.http.routers.whoami1.entrypoints=websecure"
+      - "traefik.http.routers.whoami1.rule=Host(`whoami.myhost.local`)"
+      - "traefik.http.routers.whoami1.tls=true"
+      - "traefik.http.routers.whoami1.tls.certresolver=myresolver"
+
+networks:
+  traefik-net:
+    external: true
